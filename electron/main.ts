@@ -45,7 +45,12 @@ function createWindow() {
 
     // Load app
     if (isDev) {
-        win.loadURL('http://localhost:5173');
+        const loadDevServer = () => {
+            win?.loadURL('http://localhost:5173').catch(() => {
+                setTimeout(loadDevServer, 500);
+            });
+        };
+        loadDevServer();
         win.webContents.openDevTools({ mode: 'detach' });
     } else {
         win.loadFile(path.join(__dirname, '../dist/index.html'));
