@@ -24,8 +24,10 @@ interface Props {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-// Chunk every N milliseconds of audio for real-time transcription
-const CHUNK_INTERVAL_MS = 4000;
+// Duration of each audio chunk (how long each recorder runs)
+const RECORD_DURATION_MS = 6000;
+// Interval between starting new chunks (creates a 50% overlap)
+const RECORD_INTERVAL_MS = 3000;
 // Max recent transcript text to send as context with each suggest call
 const RECENT_CONTEXT_CHARS = 1200;
 // Min transcript chars in a chunk before triggering a suggest call
@@ -36,6 +38,31 @@ const MIN_CHUNK_FOR_SUGGEST = 30;
 function buildRecentContext(entries: TranscriptEntry[]): string {
     const all = entries.map(e => e.text).join(' ');
     return all.length > RECENT_CONTEXT_CHARS ? all.slice(-RECENT_CONTEXT_CHARS) : all;
+}
+
+// Deduplicate overlapping words from adjacent Whisper chunks
+function mergeTranscripts(existingText: string, incomingText: string): string {
+    if (!existingText) return incomingText;
+    
+    const existingWords = existingText.trim().split(/\s+/);
+    const incomingWords = incomingText.trim().split(/\s+/);
+    
+    const maxOverlap = Math.min(20, existingWords.length, incomingWords.length);
+    let bestOverlap = 0;
+    
+    for (let overlap = 1; overlap <= maxOverlap; overlap++) {
+        const tail = existingWords.slice(-overlap).join(' ').replace(/[^\w\s]/g, '').toLowerCase();
+        const head = incomingWords.slice(0, overlap).join(' ').replace(/[^\w\s]/g, '').toLowerCase();
+        
+        if (tail === head) {
+            bestOverlap = overlap;
+        }
+    }
+    
+    if (bestOverlap > 0) {
+        return existingWords.join(' ') + ' ' + incomingWords.slice(bestOverlap).join(' ');
+    }
+    return existingText + ' ' + incomingText;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -85,7 +112,14 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
             if (!text) return;
 
             const entry: TranscriptEntry = { id: entryIdRef.current++, text, ts: Date.now() };
-            setTranscript(prev => [...prev, entry]);
+            setTranscript(prev => {
+                if (prev.length === 0) return [entry];
+                // Instead of appending a new entry every time, we merge into the last entry to keep the transcript clean
+                const last = prev[prev.length - 1];
+                const mergedText = mergeTranscripts(last.text, text);
+                const updatedLast = { ...last, text: mergedText };
+                return [...prev.slice(0, -1), updatedLast];
+            });
             return text;
         } catch (err) {
             console.error('Transcription error', err);
@@ -138,6 +172,18 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         }
     }, [authToken]);
 
+    const isRecordingRef = useRef(false);
+    const recordersRef = useRef<Set<MediaRecorder>>(new Set());
+    const intervalRef = useRef<any>(null);
+
+    const cleanupAudio = useCallback(() => {
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        recordersRef.current.forEach(r => {
+            if (r.state !== 'inactive') r.stop();
+        });
+        recordersRef.current.clear();
+    }, []);
+
     // ── Start recording ───────────────────────────────────────────────────────
     const startRecording = useCallback(async (sid: string) => {
         let stream: MediaStream;
@@ -149,28 +195,44 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
             return;
         }
 
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-        mediaRecorderRef.current = recorder;
+        isRecordingRef.current = true;
 
-        recorder.ondataavailable = (e) => {
-            if (e.data.size > 0) chunksRef.current.push(e.data);
+        const startChunk = () => {
+            if (!isRecordingRef.current) return;
+            
+            const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+            recordersRef.current.add(recorder);
+            const cycleChunks: Blob[] = [];
+
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) cycleChunks.push(e.data);
+            };
+
+            recorder.onstop = async () => {
+                recordersRef.current.delete(recorder);
+                if (cycleChunks.length > 0) {
+                    const blob = new Blob(cycleChunks, { type: 'audio/webm;codecs=opus' });
+                    const text = await transcribeChunk(blob);
+                    if (text && text.length >= MIN_CHUNK_FOR_SUGGEST) {
+                        fetchSuggestion(text);
+                    }
+                }
+            };
+
+            recorder.start();
+
+            // Stop this recorder after exactly RECORD_DURATION_MS
+            setTimeout(() => {
+                if (recorder.state !== 'inactive') recorder.stop();
+            }, RECORD_DURATION_MS);
         };
 
-        // Fire every CHUNK_INTERVAL_MS
-        recorder.start(CHUNK_INTERVAL_MS);
+        // Start the first chunk immediately
+        startChunk();
 
-        // Process accumulated chunks periodically
-        const interval = setInterval(async () => {
-            if (chunksRef.current.length === 0) return;
-            const batch = chunksRef.current.splice(0);
-            const blob = new Blob(batch, { type: 'audio/webm;codecs=opus' });
-            const text = await transcribeChunk(blob);
-            if (text && text.length >= MIN_CHUNK_FOR_SUGGEST) {
-                fetchSuggestion(text);
-            }
-        }, CHUNK_INTERVAL_MS);
+        // Start a new chunk every RECORD_INTERVAL_MS, creating overlap
+        intervalRef.current = setInterval(startChunk, RECORD_INTERVAL_MS);
 
-        recorder.onstop = () => clearInterval(interval);
         setStatus('live');
     }, [transcribeChunk, fetchSuggestion]);
 
@@ -191,16 +253,15 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     // ── Stop session ──────────────────────────────────────────────────────────
     const handleStop = useCallback(async () => {
         setStatus('stopping');
-        const recorder = mediaRecorderRef.current;
-        if (recorder && recorder.state !== 'inactive') {
-            recorder.stop();
-            recorder.stream.getTracks().forEach(t => t.stop());
-        }
-
-        // Flush remaining chunks
-        if (chunksRef.current.length > 0) {
-            const blob = new Blob(chunksRef.current, { type: 'audio/webm;codecs=opus' });
-            await transcribeChunk(blob);
+        isRecordingRef.current = false;
+        cleanupAudio();
+        
+        // Stop the underlying media stream
+        if (recordersRef.current.size > 0) {
+            const firstRecorder = Array.from(recordersRef.current)[0];
+            if (firstRecorder) {
+                firstRecorder.stream.getTracks().forEach(t => t.stop());
+            }
         }
 
         const sid = sessionIdRef.current;
