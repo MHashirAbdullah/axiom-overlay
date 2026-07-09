@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-electron/
 .env
+*.env
+.env.bak
 .env.local
 *.log
 temp_auto_push.bat

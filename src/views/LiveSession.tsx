@@ -150,7 +150,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                         if (data === '[DONE]') break;
                         try {
                             const parsed = JSON.parse(data);
-                            const delta = parsed.choices?.[0]?.delta?.content ?? '';
+                            const delta = parsed.token ?? parsed.choices?.[0]?.delta?.content ?? '';
                             if (delta) {
                                 accumulated += delta;
                                 setSuggestions(prev =>
@@ -204,12 +204,58 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
             recordersRef.current.add(recorder);
             const cycleChunks: Blob[] = [];
 
+            // Setup audio activity check
+            let audioContext: AudioContext | null = null;
+            let source: MediaStreamAudioSourceNode | null = null;
+            let analyser: AnalyserNode | null = null;
+            let dataArray: Uint8Array | null = null;
+            let hasSpeech = false;
+
+            try {
+                audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+            } catch (err) {
+                console.error('AudioContext setup error', err);
+            }
+
+            const checkVolume = () => {
+                if ((recorder.state as string) === 'inactive' || !analyser || !dataArray) return;
+                analyser.getByteFrequencyData(dataArray as any);
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / dataArray.length;
+                if (average > 5) {
+                    hasSpeech = true;
+                }
+                if ((recorder.state as string) !== 'inactive') {
+                    requestAnimationFrame(checkVolume);
+                }
+            };
+            if (audioContext) {
+                requestAnimationFrame(checkVolume);
+            }
+
             recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) cycleChunks.push(e.data);
             };
 
             recorder.onstop = async () => {
                 recordersRef.current.delete(recorder);
+                if (source) {
+                    try { source.disconnect(); } catch {}
+                }
+                if (audioContext) {
+                    try { audioContext.close(); } catch {}
+                }
+                if (!hasSpeech) {
+                    return;
+                }
                 if (cycleChunks.length > 0) {
                     const blob = new Blob(cycleChunks, { type: 'audio/webm;codecs=opus' });
                     const text = await transcribeChunk(blob);

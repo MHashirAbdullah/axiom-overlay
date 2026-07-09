@@ -10,13 +10,16 @@ interface ContextDoc {
 
 interface PastRound {
     round_number: number;
-    summary: string | null;
+    summary: any;
     raw_text: string | null;
 }
 
 interface MeetingContext {
-    title: string;
-    meeting_type: string;
+    meeting: {
+        id: string;
+        title: string;
+        type: string;
+    };
     context_docs: ContextDoc[];
     past_rounds: PastRound[];
 }
@@ -26,6 +29,14 @@ interface Props {
     authToken: string;
     onStart: (context: MeetingContext) => void;
     onBack: () => void;
+}
+
+function getSummaryText(summary: any, rawText: string | null): string {
+    if (!summary) return rawText ? rawText.slice(0, 80) + '…' : 'No summary yet';
+    if (typeof summary === 'object') {
+        return summary.overall_summary || JSON.stringify(summary).slice(0, 80) + '…';
+    }
+    return String(summary);
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -60,7 +71,7 @@ export default function PreSession({ token, authToken, onStart, onBack }: Props)
             <div className="pre-header">
                 <button className="back-btn" onClick={onBack}>← Back</button>
                 <div>
-                    <div className="meeting-title">{ctx?.title}</div>
+                    <div className="meeting-title">{ctx?.meeting?.title}</div>
                     <div className="token-display mono">{token}</div>
                 </div>
             </div>
@@ -85,7 +96,7 @@ export default function PreSession({ token, authToken, onStart, onBack }: Props)
                             <div key={r.round_number} className="past-round-row">
                                 <span className="round-badge">R{r.round_number}</span>
                                 <span className="round-summary muted">
-                                    {r.summary ?? (r.raw_text ? r.raw_text.slice(0, 80) + '…' : 'No summary yet')}
+                                    {getSummaryText(r.summary, r.raw_text)}
                                 </span>
                             </div>
                         ))}
