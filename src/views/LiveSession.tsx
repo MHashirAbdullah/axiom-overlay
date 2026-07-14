@@ -74,6 +74,13 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     const [suggestions, setSuggestions] = useState<SuggestionChunk[]>([]);
     const [status, setStatus] = useState<'starting' | 'live' | 'stopping' | 'done'>('starting');
     const [error, setError] = useState('');
+    const [captureMode, setCaptureMode] = useState<'both' | 'system'>('both');
+    const captureModeRef = useRef<'both' | 'system'>('both');
+
+    // Keep captureModeRef in sync
+    useEffect(() => {
+        captureModeRef.current = captureMode;
+    }, [captureMode]);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
@@ -176,22 +183,95 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     const recordersRef = useRef<Set<MediaRecorder>>(new Set());
     const intervalRef = useRef<any>(null);
 
+    const streamRef = useRef<MediaStream | null>(null);
+
     const cleanupAudio = useCallback(() => {
         if (intervalRef.current) clearInterval(intervalRef.current);
         recordersRef.current.forEach(r => {
             if (r.state !== 'inactive') r.stop();
         });
         recordersRef.current.clear();
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+            streamRef.current = null;
+        }
     }, []);
 
     // ── Start recording ───────────────────────────────────────────────────────
     const startRecording = useCallback(async (sid: string) => {
         let stream: MediaStream;
         try {
-            // Capture system audio + mic (user must grant permission)
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        } catch {
-            setError('Microphone permission denied.');
+            const mode = captureModeRef.current;
+            let systemStream: MediaStream | null = null;
+            let micStream: MediaStream | null = null;
+
+            // 1. Capture system audio if in Electron
+            if (window.electronAPI?.getDesktopSources) {
+                try {
+                    const sources = await window.electronAPI.getDesktopSources();
+                    const screenSource = sources.find(s => s.id.startsWith('screen:')) || sources[0];
+                    if (screenSource) {
+                        systemStream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                mandatory: {
+                                    chromeMediaSource: 'desktop',
+                                    chromeMediaSourceId: screenSource.id,
+                                },
+                            },
+                            video: {
+                                mandatory: {
+                                    chromeMediaSource: 'desktop',
+                                    chromeMediaSourceId: screenSource.id,
+                                },
+                            },
+                        } as any);
+                        systemStream.getVideoTracks().forEach(t => t.stop());
+                    }
+                } catch (err) {
+                    console.error('System audio capture failed', err);
+                }
+            }
+
+            // 2. Capture microphone if mode is 'both' or system capture failed
+            if (mode === 'both' || !systemStream) {
+                try {
+                    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                } catch (err) {
+                    console.error('Microphone capture failed', err);
+                }
+            }
+
+            // 3. Mix or use single stream
+            if (systemStream && micStream) {
+                const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const systemSource = audioContext.createMediaStreamSource(systemStream);
+                const micSource = audioContext.createMediaStreamSource(micStream);
+                const destination = audioContext.createMediaStreamDestination();
+                
+                systemSource.connect(destination);
+                micSource.connect(destination);
+
+                stream = destination.stream;
+
+                // Stop underlying tracks when stream.getTracks() is called during cleanup
+                const originalGetTracks = stream.getTracks.bind(stream);
+                stream.getTracks = () => [
+                    ...originalGetTracks(),
+                    ...systemStream!.getTracks(),
+                    ...micStream!.getTracks()
+                ];
+            } else {
+                const selectedStream = systemStream || micStream;
+                if (!selectedStream) {
+                    throw new Error('No audio sources found');
+                }
+                stream = selectedStream;
+            }
+
+            streamRef.current = stream;
+        } catch (err) {
+            console.error('Audio capture permission/source error', err);
+            setError('Audio capture failed. Please grant permission or check your audio sources.');
             return;
         }
 
@@ -230,7 +310,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                     sum += dataArray[i];
                 }
                 const average = sum / dataArray.length;
-                if (average > 5) {
+                if (average > 1.5) {
                     hasSpeech = true;
                 }
                 if ((recorder.state as string) !== 'inactive') {
@@ -296,19 +376,19 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         return () => { cancelled = true; };
     }, [token, authToken, startRecording]);
 
+    // Restart recording if captureMode changes during live session
+    useEffect(() => {
+        if (status === 'live' && sessionId) {
+            cleanupAudio();
+            startRecording(sessionId);
+        }
+    }, [captureMode, status, sessionId, cleanupAudio, startRecording]);
+
     // ── Stop session ──────────────────────────────────────────────────────────
     const handleStop = useCallback(async () => {
         setStatus('stopping');
         isRecordingRef.current = false;
         cleanupAudio();
-        
-        // Stop the underlying media stream
-        if (recordersRef.current.size > 0) {
-            const firstRecorder = Array.from(recordersRef.current)[0];
-            if (firstRecorder) {
-                firstRecorder.stream.getTracks().forEach(t => t.stop());
-            }
-        }
 
         const sid = sessionIdRef.current;
         const fullText = transcriptRef.current.map(e => e.text).join(' ');
@@ -318,7 +398,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
 
         setStatus('done');
         onEnd();
-    }, [authToken, onEnd, transcribeChunk]);
+    }, [authToken, onEnd, cleanupAudio]);
 
     // ── Render ────────────────────────────────────────────────────────────────
 
@@ -339,6 +419,37 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
                     <span className="live-dot" />
                     <span className="live-label">LIVE</span>
                     {roundNumber !== null && <span className="round-badge">R{roundNumber}</span>}
+                </div>
+
+                <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.06)', padding: '2px', borderRadius: '6px', fontSize: '11px', border: '1px solid var(--border)', WebkitAppRegion: 'no-drag' } as any}>
+                    <button
+                        style={{
+                            background: captureMode === 'both' ? 'var(--accent)' : 'transparent',
+                            color: captureMode === 'both' ? '#fff' : 'var(--muted)',
+                            padding: '3px 8px',
+                            fontSize: '10px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            border: 'none',
+                        }}
+                        onClick={() => setCaptureMode('both')}
+                    >
+                        Dual
+                    </button>
+                    <button
+                        style={{
+                            background: captureMode === 'system' ? 'var(--accent)' : 'transparent',
+                            color: captureMode === 'system' ? '#fff' : 'var(--muted)',
+                            padding: '3px 8px',
+                            fontSize: '10px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            border: 'none',
+                        }}
+                        onClick={() => setCaptureMode('system')}
+                    >
+                        System
+                    </button>
                 </div>
                 <button
                     className="stop-btn"

@@ -16,6 +16,14 @@
       "category": "public.app-category.productivity",
       "target": "dmg"
     },
+    "win": {
+      "target": "nsis",
+      "icon": "public/axiom-logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "files": ["dist/**/*", "dist-electron/**/*"]
   },
   "devDependencies": {

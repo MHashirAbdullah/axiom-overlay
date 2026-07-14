@@ -1,6 +1,6 @@
 // All calls to the Axiom web API — auth token is always attached.
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://axiom-prod.vercel.app';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://axiomtranscriber.vercel.app';
 
 export async function apiFetch(path: string, options: RequestInit = {}, token?: string) {
     const headers: Record<string, string> = {

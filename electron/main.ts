@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, shell, desktopCapturer } from 'electron';
 import path from 'path';
 
 let win: BrowserWindow | null = null;
@@ -99,4 +99,8 @@ ipcMain.handle('set-always-on-top', (_e, value: boolean) => {
 
 ipcMain.on('resize-window', (_e, height: number) => {
     if (win) win.setSize(420, Math.min(Math.max(height, 200), 800));
+});
+
+ipcMain.handle('get-desktop-sources', async () => {
+    return await desktopCapturer.getSources({ types: ['screen', 'window'] });
 });

@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
     setAlwaysOnTop: (val: boolean) => ipcRenderer.invoke('set-always-on-top', val),
     resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
+    getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
     platform: process.platform,
 });

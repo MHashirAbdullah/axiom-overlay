@@ -22,6 +22,10 @@ export default function App() {
         });
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
             setSession(s);
+            if (!s) {
+                setSelectedToken(null);
+                setView('select');
+            }
         });
         return () => subscription.unsubscribe();
     }, []);
@@ -42,6 +46,10 @@ export default function App() {
 
     const authToken = session.access_token;
 
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+    };
+
     if (view === 'select' || !selectedToken) {
         return (
             <MeetingSelect
@@ -50,6 +58,7 @@ export default function App() {
                     setSelectedToken(token);
                     setView('pre');
                 }}
+                onLogout={handleLogout}
             />
         );
     }

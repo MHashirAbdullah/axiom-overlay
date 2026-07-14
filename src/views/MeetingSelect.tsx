@@ -12,9 +12,10 @@ interface Meeting {
 interface Props {
     authToken: string;
     onSelect: (token: string) => void;
+    onLogout: () => void;
 }
 
-export default function MeetingSelect({ authToken, onSelect }: Props) {
+export default function MeetingSelect({ authToken, onSelect, onLogout }: Props) {
     const [meetings, setMeetings] = useState<Meeting[]>([]);
     const [manualToken, setManualToken] = useState('');
     const [loading, setLoading] = useState(true);
@@ -35,12 +36,31 @@ export default function MeetingSelect({ authToken, onSelect }: Props) {
 
     return (
         <div className="meeting-select">
-            <div className="section-header">
+            <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>Select Workspace</span>
+                <button
+                    onClick={onLogout}
+                    className="secondary"
+                    style={{
+                        padding: '2px 8px',
+                        fontSize: '11px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                    }}
+                >
+                    Logout
+                </button>
             </div>
 
             {loading && <div className="muted">Loading…</div>}
-            {error && <div className="error-msg">{error}</div>}
+            {error && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div className="error-msg">{error}</div>
+                    <button onClick={onLogout} className="secondary" style={{ width: '100%' }}>
+                        Logout
+                    </button>
+                </div>
+            )}
 
             {!loading && meetings.length > 0 && (
                 <ul className="meeting-list">
