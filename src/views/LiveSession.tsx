@@ -82,6 +82,11 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         captureModeRef.current = captureMode;
     }, [captureMode]);
 
+    const authTokenRef = useRef(authToken);
+    useEffect(() => {
+        authTokenRef.current = authToken;
+    }, [authToken]);
+
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const entryIdRef = useRef(0);
@@ -144,7 +149,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         setSuggestions(prev => [...prev.slice(-4), { id, text: '', done: false }]);
 
         try {
-            const reader = await openSuggestStream(sid, chunkText, recentContext, authToken);
+            const reader = await openSuggestStream(sid, chunkText, recentContext, authTokenRef.current);
             let accumulated = '';
             while (true) {
                 const { value, done } = await reader.read();
@@ -177,7 +182,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         } finally {
             suggestActiveRef.current = false;
         }
-    }, [authToken]);
+    }, []);
 
     const isRecordingRef = useRef(false);
     const recordersRef = useRef<Set<MediaRecorder>>(new Set());
@@ -365,7 +370,7 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
     // ── Init: start session on server, then start recording ──────────────────
     useEffect(() => {
         let cancelled = false;
-        startSession(token, authToken).then(({ session_id, round_number }) => {
+        startSession(token, authTokenRef.current).then(({ session_id, round_number }) => {
             if (cancelled) return;
             setSessionId(session_id);
             setRoundNumber(round_number);
@@ -373,8 +378,11 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         }).catch(err => {
             if (!cancelled) setError(`Failed to start session: ${err.message}`);
         });
-        return () => { cancelled = true; };
-    }, [token, authToken, startRecording]);
+        return () => {
+            cancelled = true;
+            cleanupAudio();
+        };
+    }, [token, startRecording, cleanupAudio]);
 
     // Restart recording if captureMode changes during live session
     useEffect(() => {
@@ -393,12 +401,12 @@ export default function LiveSession({ token, authToken, onEnd }: Props) {
         const sid = sessionIdRef.current;
         const fullText = transcriptRef.current.map(e => e.text).join(' ');
         if (sid && fullText) {
-            await completeSession(sid, fullText, null, authToken).catch(console.error);
+            await completeSession(sid, fullText, null, authTokenRef.current).catch(console.error);
         }
 
         setStatus('done');
         onEnd();
-    }, [authToken, onEnd, cleanupAudio]);
+    }, [onEnd, cleanupAudio]);
 
     // ── Render ────────────────────────────────────────────────────────────────
 
