@@ -5,6 +5,7 @@ import Login from './views/Login';
 import MeetingSelect from './views/MeetingSelect';
 import PreSession from './views/PreSession';
 import LiveSession from './views/LiveSession';
+import UpdateModal from './components/UpdateModal';
 import './styles.css';
 
 type AppView = 'login' | 'select' | 'pre' | 'live';
@@ -27,7 +28,26 @@ export default function App() {
                 setView('select');
             }
         });
-        return () => subscription.unsubscribe();
+
+        // Listen for OAuth deep link callbacks from Electron main process
+        const cleanupOAuth = window.electronAPI?.onOAuthCallback(async ({ access_token, refresh_token }) => {
+            setAuthLoading(true);
+            const { data, error } = await supabase.auth.setSession({
+                access_token,
+                refresh_token,
+            });
+            if (error) {
+                console.error('[App] Failed to set OAuth session:', error.message);
+            } else if (data.session) {
+                setSession(data.session);
+            }
+            setAuthLoading(false);
+        });
+
+        return () => {
+            subscription.unsubscribe();
+            if (cleanupOAuth) cleanupOAuth();
+        };
     }, []);
 
     // Resize window based on current view
@@ -42,7 +62,14 @@ export default function App() {
     }, [view]);
 
     if (authLoading) return <div className="center-msg">…</div>;
-    if (!session) return <Login />;
+    if (!session) {
+        return (
+            <>
+                <UpdateModal />
+                <Login />
+            </>
+        );
+    }
 
     const authToken = session.access_token;
 
@@ -50,39 +77,32 @@ export default function App() {
         await supabase.auth.signOut();
     };
 
-    if (view === 'select' || !selectedToken) {
-        return (
-            <MeetingSelect
-                authToken={authToken}
-                onSelect={token => {
-                    setSelectedToken(token);
-                    setView('pre');
-                }}
-                onLogout={handleLogout}
-            />
-        );
-    }
-
-    if (view === 'pre') {
-        return (
-            <PreSession
-                token={selectedToken}
-                authToken={authToken}
-                onStart={() => setView('live')}
-                onBack={() => { setSelectedToken(null); setView('select'); }}
-            />
-        );
-    }
-
-    if (view === 'live') {
-        return (
-            <LiveSession
-                token={selectedToken}
-                authToken={authToken}
-                onEnd={() => { setSelectedToken(null); setView('select'); }}
-            />
-        );
-    }
-
-    return null;
+    return (
+        <>
+            <UpdateModal />
+            {view === 'select' || !selectedToken ? (
+                <MeetingSelect
+                    authToken={authToken}
+                    onSelect={token => {
+                        setSelectedToken(token);
+                        setView('pre');
+                    }}
+                    onLogout={handleLogout}
+                />
+            ) : view === 'pre' ? (
+                <PreSession
+                    token={selectedToken}
+                    authToken={authToken}
+                    onStart={() => setView('live')}
+                    onBack={() => { setSelectedToken(null); setView('select'); }}
+                />
+            ) : (
+                <LiveSession
+                    token={selectedToken}
+                    authToken={authToken}
+                    onEnd={() => { setSelectedToken(null); setView('select'); }}
+                />
+            )}
+        </>
+    );
 }
