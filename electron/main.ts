@@ -169,8 +169,12 @@ ipcMain.handle('set-always-on-top', (_e, value: boolean) => {
     win?.setAlwaysOnTop(value, 'floating');
 });
 
-ipcMain.on('resize-window', (_e, height: number) => {
-    if (win) win.setSize(420, Math.min(Math.max(height, 200), 800));
+ipcMain.on('minimize-window', () => {
+    if (win) win.minimize();
+});
+
+ipcMain.on('close-window', () => {
+    if (win) win.hide();
 });
 
 ipcMain.handle('get-desktop-sources', async () => {

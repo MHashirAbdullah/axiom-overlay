@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
     setAlwaysOnTop: (val: boolean) => ipcRenderer.invoke('set-always-on-top', val),
     resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
+    minimizeWindow: () => ipcRenderer.send('minimize-window'),
+    closeWindow: () => ipcRenderer.send('close-window'),
     getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
     onOAuthCallback: (callback: (data: { access_token: string; refresh_token: string }) => void) => {
         const subscription = (_event: any, data: { access_token: string; refresh_token: string }) => callback(data);

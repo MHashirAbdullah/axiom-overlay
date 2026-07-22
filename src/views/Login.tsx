@@ -48,8 +48,8 @@ export default function Login() {
     return (
         <div className="login">
             <div className="login-header">
-                <div className="logo">A</div>
-                <h1>Axiom</h1>
+                <img src="/axiom-logo.png" alt="Axiom Logo" style={{ width: '48px', height: '48px', borderRadius: '10px', marginBottom: '10px' }} />
+                <h1>Axiom Overlay</h1>
                 <p>Sign in to your account</p>
             </div>
             <form onSubmit={handleSubmit}>
