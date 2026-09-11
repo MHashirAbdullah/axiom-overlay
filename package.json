@@ -14,8 +14,25 @@
     "productName": "Axiom Overlay",
     "mac": {
       "category": "public.app-category.productivity",
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "public/axiom-logo.png",
+      "artifactName": "Axiom-Overlay-Setup.dmg"
     },
+    "win": {
+      "target": "nsis",
+      "icon": "public/axiom-logo.png",
+      "artifactName": "Axiom-Overlay-Setup.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://pub-ae4b8ee8a46143fdb3d61264aa716e87.r2.dev"
+      }
+    ],
     "files": [
       "dist/**/*",
       "dist-electron/**/*"
@@ -34,9 +51,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.101.0",
-    "dotenv": "^8.2.0",
+    "electron-updater": "^6.8.9",
     "groq-sdk": "^1.1.2",
-    "node-fetch": "^3.3.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }
